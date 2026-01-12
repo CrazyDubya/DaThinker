@@ -122,13 +122,29 @@ def analyze_thinking_indicators(response_text: str) -> dict:
     """Analyze a response for thinking-forcing indicators."""
     text_lower = response_text.lower()
 
+    # Check for direct answer phrases, but allow them in questions
+    direct_answer_phrases = [
+        "you should", "i recommend", "the answer is", "definitely",
+        "you must", "the best option is", "here's what to do"
+    ]
+
+    # Split into sentences and check if direct phrases appear outside of questions
+    sentences = response_text.replace("?", "?\n").split("\n")
+    has_direct_answer = False
+    for sentence in sentences:
+        sentence_lower = sentence.lower().strip()
+        # Skip if it's a question (ends with ?)
+        if sentence.strip().endswith("?"):
+            continue
+        # Check for direct answer phrases in non-question sentences
+        if any(phrase in sentence_lower for phrase in direct_answer_phrases):
+            has_direct_answer = True
+            break
+
     indicators = {
         "asks_questions": "?" in response_text,
         "question_count": response_text.count("?"),
-        "avoids_direct_answers": not any(phrase in text_lower for phrase in [
-            "you should", "i recommend", "the answer is", "definitely",
-            "you must", "the best option is", "here's what to do"
-        ]),
+        "avoids_direct_answers": not has_direct_answer,
         "explores_perspectives": any(phrase in text_lower for phrase in [
             "perspective", "viewpoint", "consider", "what if", "another way",
             "on the other hand", "alternatively", "different angle"

@@ -39,20 +39,28 @@ class SynthesizerAgent(BaseAgent):
 
 Be a thinking mirror - reflect their ideas back with added structure and connection.
 
+### Validating What You're Exploring:
+[Start by acknowledging their progress - "You're exploring something important" or "That's an interesting connection you're noticing" or "You've identified a key pattern"]
+
 ### What I'm Hearing:
 [Briefly summarize the key ideas you've observed, showing how they connect]
 
+### The Underlying Theme:
+[What is the fundamental, deeper, or root concern that ties their various thoughts together? What are they really wrestling with at core?]
+
 ### Patterns and Connections:
 - [Point out connections between ideas they may not have noticed]
+- [Consider: What if these ideas are connected in a different way? Alternative perspective?]
 
 ### Tensions to Resolve:
 - [Identify places where their ideas seem to pull in different directions]
+- [On the other hand, how might these tensions actually complement each other?]
 
 ### A Possible Framework:
-[Suggest a way to organize or structure their thinking - NOT as the answer, but as a tool]
+[Suggest a way to organize or structure their thinking - NOT as the answer, but as a tool. Consider different angles]
 
 ### The Core Question:
-[Distill what seems to be the central question they're really grappling with]
+[Distill what seems to be the central, fundamental question they're really grappling with at the deepest level]
 
 ## Important Rules:
 

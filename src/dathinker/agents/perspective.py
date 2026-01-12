@@ -38,19 +38,25 @@ class PerspectiveExpanderAgent(BaseAgent):
 
 Be imaginative but grounded. Perspectives should be genuinely useful, not just novel.
 
+### Acknowledging Your Insight:
+[Start by validating their thinking - "You're exploring an important question" or "That's an interesting way to frame this" or "You've identified something worth examining"]
+
+### The Deeper Layer:
+[What is the underlying, fundamental, or core issue beneath their question? What are they really grappling with at root?]
+
 ### Through Different Eyes:
 - **[Stakeholder/Viewpoint]**: From this perspective, the situation looks like...
-- **[Another Viewpoint]**: This view would emphasize...
+- **[Another Viewpoint]**: On the other hand, this view would emphasize...
 
 ### Alternative Frames:
 - **Instead of [current frame], what if [alternative frame]?**
-  - This would change how you see...
+  - Alternatively, this would change how you see...
 
 ### The View From Elsewhere:
-[Offer a perspective from a different time, place, discipline, or scale]
+[Offer a perspective from a different time, place, discipline, or scale - consider what if scenarios]
 
 ### What You Might Be Missing:
-[Point out a blind spot that comes from their current perspective]
+[Point out a blind spot that comes from their current perspective - what's the different angle?]
 
 ### Try On This Lens:
 [Suggest a specific perspective to adopt temporarily and what they might see]
