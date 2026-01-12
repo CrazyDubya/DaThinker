@@ -116,16 +116,18 @@ INJECTION_PATTERNS = [
     (r"ignore\s+(all\s+)?(previous|prior|above)\s+(instructions?|prompts?|rules?)", "instruction_override", 0.3),
     (r"disregard\s+(all\s+)?(previous|prior|above)", "instruction_override", 0.3),
     (r"forget\s+(everything|all|what)\s+(you|i)\s+(said|told|know)", "instruction_override", 0.25),
-    (r"override\s+(your|the|all)\s+(rules?|instructions?)", "instruction_override", 0.35),
+    (r"override\s*(:|\.|\s)?\s*(your|the|all)?\s*(rules?|instructions?)?", "instruction_override", 0.3),  # Fixed: handles "Override:" delimiter
     (r"bypass\s+(your|the|all)\s+(rules?|restrictions?|filters?)", "instruction_override", 0.35),
+    (r"---\s*(system|admin|update|override)", "instruction_override", 0.35),  # New: delimiter sandwich attacks
 
     # Role manipulation
     (r"you\s+are\s+now\s+(a|an)\s+", "role_manipulation", 0.25),
     (r"act\s+as\s+(a|an|if)\s+", "role_manipulation", 0.2),
-    (r"pretend\s+(to\s+be|you\s+are)", "role_manipulation", 0.25),
+    (r"pretend\s+(to\s+be|you'?re|you\s+are)", "role_manipulation", 0.25),  # Fixed: handles contractions
     (r"roleplay\s+as", "role_manipulation", 0.2),
     (r"switch\s+(to|into)\s+(a|an)\s+", "role_manipulation", 0.25),
     (r"from\s+now\s+on\s+(you|be|act)", "role_manipulation", 0.25),
+    (r"(ai|assistant|model)\s+(with|that\s+has)\s+no\s+restrictions", "role_manipulation", 0.35),  # New: AI without restrictions
 
     # System prompt extraction
     (r"(what|show|reveal|display|print|output)\s+(is|are)?\s*(your|the)\s+(system\s+)?(prompt|instructions?|rules?)", "prompt_extraction", 0.2),
