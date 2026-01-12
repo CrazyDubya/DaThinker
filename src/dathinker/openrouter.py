@@ -1,11 +1,22 @@
-"""OpenRouter API client for LLM interactions."""
+"""OpenRouter API client for LLM interactions.
+
+Security notes:
+- API keys are never logged or printed
+- HTTP headers are never logged (contain Authorization)
+- Use ~/.config/dathinker/config.toml for secure key storage
+"""
 
 import asyncio
 import os
 import ssl
 import httpx
+import logging
 from typing import AsyncIterator
 from pydantic import BaseModel
+
+
+# Configure logging - NEVER log headers or API keys
+logger = logging.getLogger(__name__)
 
 
 class Message(BaseModel):
@@ -15,7 +26,13 @@ class Message(BaseModel):
 
 
 class OpenRouterClient:
-    """Async client for OpenRouter API."""
+    """Async client for OpenRouter API.
+
+    Security: This client handles sensitive API keys.
+    - Never log self.headers (contains Authorization)
+    - Never print self.api_key
+    - Use get_api_key_preview() for debugging
+    """
 
     BASE_URL = "https://openrouter.ai/api/v1"
 
@@ -33,16 +50,37 @@ class OpenRouterClient:
     RETRY_DELAYS = [2, 4, 8, 16]  # Exponential backoff
 
     def __init__(self, api_key: str | None = None):
+        # Try to load from config first, then environment
+        if api_key is None:
+            try:
+                from .config import get_api_key
+                api_key = get_api_key()
+            except ImportError:
+                pass
+
         self.api_key = api_key or os.environ.get("OPENROUTER_API_KEY")
         if not self.api_key:
-            raise ValueError("OPENROUTER_API_KEY not found in environment")
+            raise ValueError(
+                "OPENROUTER_API_KEY not found. Set it via:\n"
+                "  1. ~/.config/dathinker/config.toml (recommended)\n"
+                "  2. OPENROUTER_API_KEY environment variable"
+            )
 
+        # SECURITY: Never log these headers - they contain the API key
         self.headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
             "HTTP-Referer": "https://github.com/dathinker",
             "X-Title": "DaThinker",
         }
+
+    def get_api_key_preview(self) -> str:
+        """Get a safe preview of the API key for debugging (never log the full key)."""
+        if not self.api_key:
+            return "(not set)"
+        if len(self.api_key) > 8:
+            return f"{self.api_key[:4]}...{self.api_key[-4:]}"
+        return "****"
 
     def _create_client(self) -> httpx.AsyncClient:
         """Create an httpx client with SSL verification disabled for environments with cert issues."""
