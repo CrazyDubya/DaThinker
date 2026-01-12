@@ -19,11 +19,16 @@ class OpenRouterClient:
 
     BASE_URL = "https://openrouter.ai/api/v1"
 
-    # Cost-effective models that are good for reasoning (using free tier)
+    # Cost-effective models that are good for reasoning
+    # Using OpenRouter's cheap/free tier models for testing
     MODELS = {
+        # Free tier options
         "fast": "meta-llama/llama-3.2-3b-instruct:free",  # Free, fast
-        "balanced": "meta-llama/llama-3.2-3b-instruct:free",  # Using same for reliability
-        "reasoning": "meta-llama/llama-3.2-3b-instruct:free",  # Free reasoning
+        "balanced": "google/gemma-2-9b-it:free",  # Free, balanced quality
+        "reasoning": "qwen/qwen-2.5-7b-instruct:free",  # Free, good reasoning
+        # Cheap paid options (fallbacks if free models are unavailable)
+        "cheap-fast": "meta-llama/llama-3.1-8b-instruct",  # ~$0.05/M tokens
+        "cheap-smart": "anthropic/claude-3-haiku",  # ~$0.25/M tokens
     }
 
     MAX_RETRIES = 4
