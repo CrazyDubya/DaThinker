@@ -229,7 +229,7 @@ Available agents:
 User input: {user_input}
 {f"Context: {context}" if context else ""}
 
-Respond with ONLY a comma-separated list of 1-3 agent names in the order they should respond. Choose based on what would most help the user think deeper. Example: "clarifier,socratic,advocate"
+Respond with ONLY a comma-separated list of 2-3 agent names in the order they should respond. Always include at least 2 agents to provide multiple perspectives. Choose based on what would most help the user think deeper. Example: "socratic,expander" or "clarifier,socratic,advocate"
 
 Agents to use:"""
 
