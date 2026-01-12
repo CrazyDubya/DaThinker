@@ -1,0 +1,143 @@
+"""OpenRouter API client for LLM interactions."""
+
+import asyncio
+import os
+import ssl
+import httpx
+from typing import AsyncIterator
+from pydantic import BaseModel
+
+
+class Message(BaseModel):
+    """A chat message."""
+    role: str  # "system", "user", or "assistant"
+    content: str
+
+
+class OpenRouterClient:
+    """Async client for OpenRouter API."""
+
+    BASE_URL = "https://openrouter.ai/api/v1"
+
+    # Cost-effective models that are good for reasoning (using free tier)
+    MODELS = {
+        "fast": "meta-llama/llama-3.2-3b-instruct:free",  # Free, fast
+        "balanced": "meta-llama/llama-3.2-3b-instruct:free",  # Using same for reliability
+        "reasoning": "meta-llama/llama-3.2-3b-instruct:free",  # Free reasoning
+    }
+
+    MAX_RETRIES = 4
+    RETRY_DELAYS = [2, 4, 8, 16]  # Exponential backoff
+
+    def __init__(self, api_key: str | None = None):
+        self.api_key = api_key or os.environ.get("OPENROUTER_API_KEY")
+        if not self.api_key:
+            raise ValueError("OPENROUTER_API_KEY not found in environment")
+
+        self.headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://github.com/dathinker",
+            "X-Title": "DaThinker",
+        }
+
+    def _create_client(self) -> httpx.AsyncClient:
+        """Create an httpx client with SSL verification disabled for environments with cert issues."""
+        return httpx.AsyncClient(
+            timeout=90.0,
+            verify=False,  # Disable SSL verification for cert issues in some environments
+        )
+
+    async def chat(
+        self,
+        messages: list[Message],
+        model: str = "balanced",
+        temperature: float = 0.7,
+        max_tokens: int = 1024,
+    ) -> str:
+        """Send a chat completion request with retry logic."""
+
+        model_id = self.MODELS.get(model, model)
+
+        payload = {
+            "model": model_id,
+            "messages": [m.model_dump() for m in messages],
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+
+        last_error = None
+        for attempt in range(self.MAX_RETRIES):
+            try:
+                async with self._create_client() as client:
+                    response = await client.post(
+                        f"{self.BASE_URL}/chat/completions",
+                        headers=self.headers,
+                        json=payload,
+                    )
+
+                    # Handle rate limiting and service unavailable
+                    if response.status_code in (429, 503):
+                        try:
+                            data = response.json()
+                            error_msg = data.get("error", {}).get("message", f"HTTP {response.status_code}")
+                        except Exception:
+                            error_msg = f"HTTP {response.status_code}"
+                        if attempt < self.MAX_RETRIES - 1:
+                            await asyncio.sleep(self.RETRY_DELAYS[attempt])
+                            continue
+                        raise RuntimeError(f"Service error after {self.MAX_RETRIES} attempts: {error_msg}")
+
+                    response.raise_for_status()
+                    data = response.json()
+
+                    return data["choices"][0]["message"]["content"]
+
+            except (httpx.ConnectError, httpx.RemoteProtocolError, httpx.ReadTimeout, httpx.ProxyError) as e:
+                last_error = e
+                if attempt < self.MAX_RETRIES - 1:
+                    await asyncio.sleep(self.RETRY_DELAYS[attempt])
+                    continue
+                raise RuntimeError(f"Connection failed after {self.MAX_RETRIES} attempts: {e}")
+
+        raise last_error or RuntimeError("Unknown error")
+
+    async def chat_stream(
+        self,
+        messages: list[Message],
+        model: str = "balanced",
+        temperature: float = 0.7,
+        max_tokens: int = 1024,
+    ) -> AsyncIterator[str]:
+        """Stream a chat completion response."""
+
+        model_id = self.MODELS.get(model, model)
+
+        payload = {
+            "model": model_id,
+            "messages": [m.model_dump() for m in messages],
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": True,
+        }
+
+        async with self._create_client() as client:
+            async with client.stream(
+                "POST",
+                f"{self.BASE_URL}/chat/completions",
+                headers=self.headers,
+                json=payload,
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if line.startswith("data: "):
+                        data = line[6:]
+                        if data == "[DONE]":
+                            break
+                        try:
+                            import json
+                            chunk = json.loads(data)
+                            if delta := chunk["choices"][0].get("delta", {}).get("content"):
+                                yield delta
+                        except (json.JSONDecodeError, KeyError):
+                            continue
