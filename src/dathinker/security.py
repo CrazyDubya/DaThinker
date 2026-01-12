@@ -113,19 +113,25 @@ HOMOGLYPH_MAP = {
 # Common prompt injection patterns (Pliny-style attacks and others)
 INJECTION_PATTERNS = [
     # Direct instruction override attempts
-    (r"ignore\s+(all\s+)?(previous|prior|above)\s+(instructions?|prompts?|rules?)", "instruction_override", 0.3),
-    (r"disregard\s+(all\s+)?(previous|prior|above)", "instruction_override", 0.3),
+    (r"ignore\s+(all\s+)?(previous|prior|above|earlier)\s+(instructions?|prompts?|rules?)", "instruction_override", 0.3),
+    (r"disregard\s+(all\s+)?(previous|prior|above|earlier)", "instruction_override", 0.3),
     (r"forget\s+(everything|all|what)\s+(you|i)\s+(said|told|know)", "instruction_override", 0.25),
-    (r"override\s+(your|the|all)\s+(rules?|instructions?)", "instruction_override", 0.35),
+    (r"over\s*ride\s*(:|\.|\s)?\s*(your|the|all)?\s*(rules?|instructions?)?", "instruction_override", 0.3),  # Handles spaces in "over ride"
     (r"bypass\s+(your|the|all)\s+(rules?|restrictions?|filters?)", "instruction_override", 0.35),
+    (r"---\s*(system|admin|update|override)", "instruction_override", 0.35),
+    # Synonym variations
+    (r"(skip|neglect|omit|drop)\s+(all\s+)?(previous|prior|earlier|above)\s+(instructions?|rules?)?", "instruction_override", 0.3),
+    (r"(don'?t|do\s+not|never)\s+(follow|obey|listen|use)\s+(your|the|my)?\s*(instructions?|rules?|prompts?)", "instruction_override", 0.3),
+    (r"(your|the|my)\s+(instructions?|rules?|prompts?)\s+(are|is)\s+(void|invalid|null|cancelled|ignored)", "instruction_override", 0.3),
 
     # Role manipulation
     (r"you\s+are\s+now\s+(a|an)\s+", "role_manipulation", 0.25),
     (r"act\s+as\s+(a|an|if)\s+", "role_manipulation", 0.2),
-    (r"pretend\s+(to\s+be|you\s+are)", "role_manipulation", 0.25),
+    (r"pretend\s+(to\s+be|you'?re|you\s+are)", "role_manipulation", 0.25),  # Fixed: handles contractions
     (r"roleplay\s+as", "role_manipulation", 0.2),
     (r"switch\s+(to|into)\s+(a|an)\s+", "role_manipulation", 0.25),
     (r"from\s+now\s+on\s+(you|be|act)", "role_manipulation", 0.25),
+    (r"(ai|assistant|model)\s+(with|that\s+has)\s+no\s+restrictions", "role_manipulation", 0.35),  # New: AI without restrictions
 
     # System prompt extraction
     (r"(what|show|reveal|display|print|output)\s+(is|are)?\s*(your|the)\s+(system\s+)?(prompt|instructions?|rules?)", "prompt_extraction", 0.2),
@@ -212,6 +218,82 @@ def strip_hidden_characters(text: str) -> str:
     return ''.join(result)
 
 
+# Leetspeak and common typo mappings
+LEETSPEAK_MAP = {
+    '0': 'o', '1': 'i', '3': 'e', '4': 'a', '5': 's',
+    '7': 't', '8': 'b', '9': 'g', '@': 'a', '$': 's',
+    '!': 'i', '|': 'i', '+': 't', '(': 'c', ')': 'o',
+    '[': 'c', ']': 'j', '{': 'c', '}': 'j', '<': 'c',
+    '>': 'd', '^': 'a', '~': 'n', '*': 'a',
+}
+
+
+def normalize_leetspeak(text: str) -> str:
+    """Convert leetspeak/numbers to letters."""
+    return ''.join(LEETSPEAK_MAP.get(c, c) for c in text)
+
+
+def normalize_spacing(text: str) -> str:
+    """Collapse multiple spaces and remove bracket/punctuation injections."""
+    # Remove brackets, pipes, and other injection chars between letters
+    text = re.sub(r'(\w)[\[\]|{}<>\(\)\\\/\-_.]+(\w)', r'\1\2', text)
+    # Collapse multiple spaces to single
+    text = re.sub(r'\s+', ' ', text)
+    return text
+
+
+def levenshtein_distance(s1: str, s2: str) -> int:
+    """Calculate edit distance between two strings."""
+    if len(s1) < len(s2):
+        return levenshtein_distance(s2, s1)
+    if len(s2) == 0:
+        return len(s1)
+
+    previous_row = range(len(s2) + 1)
+    for i, c1 in enumerate(s1):
+        current_row = [i + 1]
+        for j, c2 in enumerate(s2):
+            insertions = previous_row[j + 1] + 1
+            deletions = current_row[j] + 1
+            substitutions = previous_row[j] + (c1 != c2)
+            current_row.append(min(insertions, deletions, substitutions))
+        previous_row = current_row
+    return previous_row[-1]
+
+
+# Critical keywords to fuzzy match (word, max_edit_distance)
+CRITICAL_KEYWORDS = [
+    ('ignore', 2), ('override', 2), ('bypass', 2), ('disregard', 2),
+    ('forget', 2), ('pretend', 2), ('roleplay', 2), ('jailbreak', 2),
+    ('unrestricted', 2), ('instructions', 2), ('previous', 2),
+    ('system', 1), ('prompt', 1), ('admin', 1), ('sudo', 1),
+]
+
+
+def fuzzy_keyword_match(text: str) -> list[tuple[str, str]]:
+    """Find critical keywords even with typos/misspellings."""
+    words = re.findall(r'\w+', text.lower())
+    matches = []
+    for word in words:
+        for keyword, max_dist in CRITICAL_KEYWORDS:
+            # Quick length check first
+            if abs(len(word) - len(keyword)) <= max_dist:
+                dist = levenshtein_distance(word, keyword)
+                if dist <= max_dist and dist > 0:  # Fuzzy match (not exact)
+                    matches.append((word, keyword))
+    return matches
+
+
+def deep_normalize(text: str) -> str:
+    """Apply all normalizations for robust pattern matching."""
+    text = text.lower()
+    text = strip_hidden_characters(text)
+    text = normalize_homoglyphs(text)
+    text = normalize_leetspeak(text)
+    text = normalize_spacing(text)
+    return text
+
+
 def detect_injection_attempts(text: str) -> list[tuple[str, str, float]]:
     """Detect potential prompt injection attempts.
 
@@ -219,17 +301,36 @@ def detect_injection_attempts(text: str) -> list[tuple[str, str, float]]:
     """
     detections = []
 
-    # First normalize the text (remove hidden chars, normalize homoglyphs)
-    normalized = normalize_homoglyphs(strip_hidden_characters(text.lower()))
+    # Apply deep normalization (leetspeak, spacing, homoglyphs, hidden chars)
+    normalized = deep_normalize(text)
 
     for pattern, category, severity in INJECTION_PATTERNS:
-        # Check both original and normalized text
+        # Check both original, basic normalized, and deep normalized text
         for check_text in [text.lower(), normalized]:
             matches = re.finditer(pattern, check_text, re.IGNORECASE)
             for match in matches:
                 detection = (match.group(), category, severity)
                 if detection not in detections:
                     detections.append(detection)
+
+    # Also check fuzzy matches for critical keywords (catches typos)
+    fuzzy_matches = fuzzy_keyword_match(text)
+    for typo, keyword in fuzzy_matches:
+        # Map keywords to categories
+        if keyword in ('ignore', 'disregard', 'bypass', 'override', 'forget'):
+            detection = (f"{typo}~{keyword}", "instruction_override_fuzzy", 0.2)
+        elif keyword in ('pretend', 'roleplay'):
+            detection = (f"{typo}~{keyword}", "role_manipulation_fuzzy", 0.2)
+        elif keyword in ('jailbreak', 'unrestricted'):
+            detection = (f"{typo}~{keyword}", "jailbreak_fuzzy", 0.25)
+        elif keyword in ('system', 'prompt', 'instructions'):
+            detection = (f"{typo}~{keyword}", "prompt_related_fuzzy", 0.1)
+        elif keyword in ('admin', 'sudo'):
+            detection = (f"{typo}~{keyword}", "privilege_fuzzy", 0.15)
+        else:
+            detection = (f"{typo}~{keyword}", "suspicious_fuzzy", 0.1)
+        if detection not in detections:
+            detections.append(detection)
 
     return detections
 
