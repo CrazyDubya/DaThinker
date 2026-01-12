@@ -22,16 +22,66 @@ class AgentRole(str, Enum):
     PERSPECTIVE = "perspective"  # Offers alternative viewpoints
 
 
+class AgentIntent(str, Enum):
+    """The intent behind an agent's response."""
+    CLARIFY = "clarify"      # Seeking to clarify definitions or meaning
+    CHALLENGE = "challenge"  # Challenging assumptions or claims
+    EXPAND = "expand"        # Expanding perspective or options
+    SYNTHESIZE = "synthesize"  # Connecting or organizing ideas
+    QUESTION = "question"    # Probing with questions
+    VALIDATE = "validate"    # Confirming or supporting a point
+
+
+@dataclass
+class TargetedElement:
+    """An element the agent is targeting (assumption, claim, definition)."""
+    element_type: str  # "assumption", "claim", "definition", "framing"
+    content: str
+    action: str  # "question", "challenge", "clarify", "support"
+
+
 @dataclass
 class AgentResponse:
-    """Response from a thinking agent."""
+    """Response from a thinking agent.
+
+    Structured for machine-usability while maintaining readable content.
+    """
     agent_name: str
     role: AgentRole
     content: str
+
+    # Core structured outputs
     questions: list[str] = field(default_factory=list)  # Questions to prompt further thinking
     challenges: list[str] = field(default_factory=list)  # Challenges to assumptions
     insights: list[str] = field(default_factory=list)  # Key insights identified
+
+    # Enhanced structured outputs (D from spec)
+    intent: AgentIntent = AgentIntent.QUESTION  # Primary intent of this response
+    targets: list[TargetedElement] = field(default_factory=list)  # What's being acted upon
+    proposals: list[str] = field(default_factory=list)  # Concrete proposals or suggestions
+    citations: list[str] = field(default_factory=list)  # Source citations (for future retrieval)
+
+    # Metadata
     security_warnings: list[str] = field(default_factory=list)  # Any security warnings
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for serialization."""
+        return {
+            "agent_name": self.agent_name,
+            "role": self.role.value,
+            "content": self.content,
+            "intent": self.intent.value,
+            "questions": self.questions,
+            "challenges": self.challenges,
+            "insights": self.insights,
+            "proposals": self.proposals,
+            "targets": [
+                {"type": t.element_type, "content": t.content, "action": t.action}
+                for t in self.targets
+            ],
+            "citations": self.citations,
+            "security_warnings": self.security_warnings,
+        }
 
 
 class BaseAgent(ABC):
@@ -171,11 +221,13 @@ class BaseAgent(ABC):
     def _parse_response(self, content: str) -> AgentResponse:
         """Parse LLM response into structured AgentResponse.
 
-        Improved parsing that handles various formats.
+        Enhanced parsing that extracts intent, targets, and proposals.
         """
         questions = []
         challenges = []
         insights = []
+        proposals = []
+        targets = []
 
         lines = content.split("\n")
         current_section = None
@@ -194,6 +246,9 @@ class BaseAgent(ABC):
             elif any(i in line_lower for i in ["insight", "pattern", "observation", "key point"]):
                 if line.startswith("#") or line.startswith("**") or line.endswith(":"):
                     current_section = "insights"
+            elif any(p in line_lower for p in ["suggest", "propose", "recommend", "could", "might"]):
+                if line.startswith("#") or line.startswith("**") or line.endswith(":"):
+                    current_section = "proposals"
 
             # Extract bullet points
             if line_stripped.startswith(("- ", "* ", "• ")):
@@ -205,6 +260,8 @@ class BaseAgent(ABC):
                         challenges.append(item)
                     elif current_section == "insights":
                         insights.append(item)
+                    elif current_section == "proposals":
+                        proposals.append(item)
 
             # Also extract numbered items
             numbered_match = re.match(r'^\d+[\.\)]\s*(.+)', line_stripped)
@@ -217,6 +274,8 @@ class BaseAgent(ABC):
                         challenges.append(item)
                     elif current_section == "insights":
                         insights.append(item)
+                    elif current_section == "proposals":
+                        proposals.append(item)
 
             # Extract questions by pattern (sentences ending in ?)
             if "?" in line_stripped and current_section == "questions":
@@ -225,6 +284,12 @@ class BaseAgent(ABC):
                 if q_match and q_match.group(1) not in questions:
                     questions.append(q_match.group(1).strip())
 
+        # Determine primary intent based on role and content
+        intent = self._determine_intent(content, questions, challenges, insights)
+
+        # Extract targeted elements (assumptions, claims, definitions being acted upon)
+        targets = self._extract_targets(content)
+
         return AgentResponse(
             agent_name=self.name,
             role=self.role,
@@ -232,5 +297,84 @@ class BaseAgent(ABC):
             questions=questions,
             challenges=challenges,
             insights=insights,
+            intent=intent,
+            targets=targets,
+            proposals=proposals,
+            citations=[],  # Will be populated when retrieval is added
             security_warnings=[],
         )
+
+    def _determine_intent(
+        self,
+        content: str,
+        questions: list[str],
+        challenges: list[str],
+        insights: list[str],
+    ) -> "AgentIntent":
+        """Determine the primary intent of the response."""
+        from .base import AgentIntent
+
+        content_lower = content.lower()
+
+        # Role-based default intents
+        role_intents = {
+            AgentRole.SOCRATIC: AgentIntent.QUESTION,
+            AgentRole.DEVILS_ADVOCATE: AgentIntent.CHALLENGE,
+            AgentRole.CLARIFIER: AgentIntent.CLARIFY,
+            AgentRole.SYNTHESIZER: AgentIntent.SYNTHESIZE,
+            AgentRole.PERSPECTIVE: AgentIntent.EXPAND,
+        }
+
+        # Start with role default
+        intent = role_intents.get(self.role, AgentIntent.QUESTION)
+
+        # Adjust based on content analysis
+        if len(questions) > len(challenges) and len(questions) > len(insights):
+            intent = AgentIntent.QUESTION
+        elif len(challenges) > len(questions) and len(challenges) > len(insights):
+            intent = AgentIntent.CHALLENGE
+        elif "what if" in content_lower or "consider" in content_lower or "alternatively" in content_lower:
+            intent = AgentIntent.EXPAND
+        elif "therefore" in content_lower or "in summary" in content_lower or "connecting" in content_lower:
+            intent = AgentIntent.SYNTHESIZE
+        elif "define" in content_lower or "what do you mean" in content_lower or "unclear" in content_lower:
+            intent = AgentIntent.CLARIFY
+
+        return intent
+
+    def _extract_targets(self, content: str) -> list["TargetedElement"]:
+        """Extract targeted elements (assumptions, claims, definitions) from content."""
+        from .base import TargetedElement
+
+        targets = []
+        content_lower = content.lower()
+
+        # Patterns for identifying targeted elements
+        patterns = [
+            # Assumptions
+            (r"(?:you(?:'re| are) assuming|assumption that|assumes that)\s+(.+?)(?:\.|,|$)", "assumption", "question"),
+            (r"(?:underlying assumption|implicit assumption):\s*(.+?)(?:\.|$)", "assumption", "question"),
+
+            # Claims
+            (r"(?:your claim that|the claim that|you(?:'re| are) claiming)\s+(.+?)(?:\.|,|$)", "claim", "challenge"),
+            (r"(?:this suggests|this implies)\s+(.+?)(?:\.|$)", "claim", "question"),
+
+            # Definitions
+            (r"(?:what do you mean by|define)\s+['\"]?(.+?)['\"]?(?:\?|$)", "definition", "clarify"),
+            (r"(?:the term|the word)\s+['\"]?(.+?)['\"]?\s+(?:is|seems)", "definition", "clarify"),
+
+            # Framing
+            (r"(?:you(?:'re| are) framing|framed as|the framing)\s+(.+?)(?:\.|,|$)", "framing", "challenge"),
+        ]
+
+        for pattern, element_type, action in patterns:
+            matches = re.findall(pattern, content_lower, re.IGNORECASE)
+            for match in matches[:2]:  # Limit to 2 per type
+                if len(match) > 5:  # Meaningful content
+                    targets.append(TargetedElement(
+                        element_type=element_type,
+                        content=match.strip()[:100],  # Truncate long matches
+                        action=action,
+                    ))
+
+        return targets
