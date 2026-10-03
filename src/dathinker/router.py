@@ -25,6 +25,10 @@ class RouterType(str, Enum):
     HYBRID = "hybrid"
 
 
+# Alias kept for the parallel PR-10 session-control API.
+RouterVersion = RouterType
+
+
 @dataclass
 class AgentScore:
     """Score and reasoning for a single agent."""

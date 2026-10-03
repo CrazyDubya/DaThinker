@@ -31,6 +31,55 @@ class ThinkingMode(str, Enum):
     ADAPTIVE = "adaptive"  # Orchestrator chooses based on context
 
 
+class AssumptionStatus(str, Enum):
+    """Status of a pinned assumption."""
+    OPEN = "open"
+    CONFIRMED = "confirmed"
+    CONTESTED = "contested"
+    REVISED = "revised"
+
+
+class SynthesisStyle(str, Enum):
+    """Output style for synthesis."""
+    MEMO = "memo"
+    OUTLINE = "outline"
+    DEBATE = "debate"
+    TODO = "todo"
+
+
+@dataclass
+class PinnedStatement:
+    """A user-pinned statement or assumption (string id form)."""
+    id: str
+    content: str
+    status: AssumptionStatus = AssumptionStatus.OPEN
+    turn_created: int = 0
+    turn_last_referenced: int = 0
+    agent_references: list[str] = field(default_factory=list)
+
+
+@dataclass
+class Goal:
+    """A session goal the user is optimizing for."""
+    id: str
+    content: str
+    priority: int = 1  # 1 = highest
+    active: bool = True
+
+
+@dataclass
+class MultiLevelSynthesis:
+    """Multi-level synthesis output."""
+    tldr: list[str]
+    key_claims: list[str]
+    evidence: list[str]
+    assumptions: list[str]
+    open_questions: list[str]
+    conflicts: list[str]
+    next_moves: list[str]
+    raw_text: str
+
+
 @dataclass
 class Assumption:
     """A working assumption pinned during the session."""
@@ -47,6 +96,7 @@ class Constraint:
     id: int
     content: str
     category: str = "general"  # time, money, ethics, scope, technical
+    hard: bool = True  # Hard = must respect, Soft = prefer to respect
 
 
 @dataclass
@@ -63,6 +113,11 @@ class ThinkingSession:
     goal: str = ""  # What we're optimizing for
     constraints: list[Constraint] = field(default_factory=list)  # Constraints to respect
     routing_traces: list[RoutingTrace] = field(default_factory=list)  # Routing history
+    # Richer session surfaces (multi-goal, string-id pins) alongside the v0.2 fields above.
+    pins: list[PinnedStatement] = field(default_factory=list)
+    goals: list[Goal] = field(default_factory=list)
+    _pin_counter: int = 0
+    _goal_counter: int = 0
 
 
 class ThinkingOrchestrator:
@@ -80,7 +135,10 @@ class ThinkingOrchestrator:
         client: OpenRouterClient | None = None,
         model: str = "balanced",
         router_type: RouterType = RouterType.HEURISTIC,
+        router_version: RouterType | None = None,
     ):
+        if router_version is not None:
+            router_type = router_version
         self.client = client or OpenRouterClient()
         self.model = model
 
@@ -95,6 +153,7 @@ class ThinkingOrchestrator:
 
         # Initialize router (v0.2 - pluggable routing)
         self.router_type = router_type
+        self.router_version = router_type
         self.router: BaseRouter = create_router(router_type, self.client)
 
         self.active_session: ThinkingSession | None = None
@@ -437,6 +496,11 @@ Return ONLY valid JSON, no markdown code blocks or other text."""
             return result
 
         except (json.JSONDecodeError, Exception) as e:
+            raw = response if isinstance(locals().get("response"), str) else ""
+            if "##" in raw:
+                parsed = self._parse_synthesis(raw)
+                if isinstance(style, SynthesisStyle) or parsed.tldr or parsed.key_claims or parsed.next_moves:
+                    return parsed
             # Fallback to simple text synthesis
             return {
                 "tldr": [f"Synthesis generation encountered an issue: {str(e)[:50]}"],
@@ -457,6 +521,7 @@ Return ONLY valid JSON, no markdown code blocks or other text."""
     def set_router(self, router_type: RouterType) -> None:
         """Switch to a different router implementation."""
         self.router_type = router_type
+        self.router_version = router_type
         self.router = create_router(router_type, self.client)
 
     def get_router_info(self) -> dict:
@@ -527,7 +592,7 @@ Return ONLY valid JSON, no markdown code blocks or other text."""
             return ""
         return self.active_session.goal
 
-    def add_constraint(self, content: str, category: str = "general") -> Constraint:
+    def add_constraint(self, content: str, category: str = "general", hard: bool = True) -> Constraint:
         """Add a constraint that agents must respect."""
         if not self.active_session:
             raise ValueError("No active session")
@@ -541,6 +606,7 @@ Return ONLY valid JSON, no markdown code blocks or other text."""
             id=self._constraint_counter,
             content=content,
             category=category,
+            hard=hard,
         )
         self.active_session.constraints.append(constraint)
         return constraint
@@ -586,5 +652,203 @@ Return ONLY valid JSON, no markdown code blocks or other text."""
                 "contested": len([a for a in self.active_session.assumptions if a.status == "contested"]),
             },
             "constraints": len(self.active_session.constraints),
+            "pins": len(self.active_session.pins),
+            "goals": len([g for g in self.active_session.goals if g.active]),
             "routing_decisions": len(self.active_session.routing_traces),
+            "routing_traces": len(self.active_session.routing_traces),
         }
+
+    def pin(self, content: str) -> PinnedStatement:
+        """Pin a statement as a working assumption (string-id form)."""
+        if not self.active_session:
+            raise ValueError("No active session")
+
+        self.active_session._pin_counter += 1
+        turn = len([h for h in self.active_session.history if h.get("type") == "user"])
+        pin = PinnedStatement(
+            id=f"pin_{self.active_session._pin_counter}",
+            content=content,
+            turn_created=turn,
+            turn_last_referenced=turn,
+        )
+        self.active_session.pins.append(pin)
+        return pin
+
+    def get_pins(self, status: AssumptionStatus | None = None) -> list[PinnedStatement]:
+        """Get all pins, optionally filtered by status."""
+        if not self.active_session:
+            return []
+        pins = self.active_session.pins
+        if status:
+            pins = [p for p in pins if p.status == status]
+        return pins
+
+    def update_pin_status(self, pin_id: str, status: AssumptionStatus) -> bool:
+        """Update the status of a pinned statement."""
+        if not self.active_session:
+            return False
+        for pin in self.active_session.pins:
+            if pin.id == pin_id:
+                pin.status = status
+                return True
+        return False
+
+    def add_goal(self, content: str, priority: int = 1) -> Goal:
+        """Add a session goal."""
+        if not self.active_session:
+            raise ValueError("No active session")
+        self.active_session._goal_counter += 1
+        goal = Goal(
+            id=f"goal_{self.active_session._goal_counter}",
+            content=content,
+            priority=priority,
+        )
+        self.active_session.goals.append(goal)
+        self.active_session.goals.sort(key=lambda g: g.priority)
+        return goal
+
+    def get_goals(self, active_only: bool = True) -> list[Goal]:
+        """Get session goals."""
+        if not self.active_session:
+            return []
+        goals = self.active_session.goals
+        if active_only:
+            goals = [g for g in goals if g.active]
+        return goals
+
+    def deactivate_goal(self, goal_id: str) -> bool:
+        """Mark a goal as inactive."""
+        if not self.active_session:
+            return False
+        for goal in self.active_session.goals:
+            if goal.id == goal_id:
+                goal.active = False
+                return True
+        return False
+
+    def _build_context_for_agents(self) -> str:
+        """Build context string including goals, constraints, and pins."""
+        if not self.active_session:
+            return ""
+        parts = []
+        goals = self.get_goals(active_only=True)
+        if goals:
+            parts.append("SESSION GOALS:\n" + "\n".join(f"- {g.content}" for g in goals))
+        elif self.active_session.goal:
+            parts.append(f"SESSION GOALS:\n- {self.active_session.goal}")
+        constraints = self.get_constraints()
+        if constraints:
+            parts.append(
+                "CONSTRAINTS:\n"
+                + "\n".join(
+                    f"- {'[HARD]' if c.hard else '[SOFT]'} {c.content}" for c in constraints
+                )
+            )
+        pins = self.get_pins()
+        if pins:
+            parts.append(
+                "WORKING ASSUMPTIONS:\n"
+                + "\n".join(f"- [{p.status.value}] {p.content}" for p in pins)
+            )
+        elif self.active_session.assumptions:
+            parts.append(
+                "WORKING ASSUMPTIONS:\n"
+                + "\n".join(
+                    f"- [{a.status}] {a.content}" for a in self.active_session.assumptions
+                )
+            )
+        return "\n\n".join(parts)
+
+    def _parse_synthesis(self, raw_text: str) -> MultiLevelSynthesis:
+        """Parse a markdown synthesis into structured sections."""
+        sections = {
+            "tldr": [],
+            "key_claims": [],
+            "evidence": [],
+            "assumptions": [],
+            "open_questions": [],
+            "conflicts": [],
+            "next_moves": [],
+        }
+        current_section = None
+        section_map = {
+            "tl;dr": "tldr",
+            "tldr": "tldr",
+            "key claims": "key_claims",
+            "claims": "key_claims",
+            "evidence": "evidence",
+            "assumptions": "assumptions",
+            "open questions": "open_questions",
+            "questions": "open_questions",
+            "conflicts": "conflicts",
+            "tensions": "conflicts",
+            "next moves": "next_moves",
+            "next steps": "next_moves",
+            "action": "next_moves",
+        }
+        for line in raw_text.split("\n"):
+            line = line.strip()
+            if line.startswith("##") or line.startswith("**"):
+                header = line.replace("#", "").replace("*", "").strip().lower()
+                for key, section in section_map.items():
+                    if key in header:
+                        current_section = section
+                        break
+            elif line.startswith(("-", "*", "•")) and current_section:
+                content = line.lstrip("-*• ").strip()
+                if content:
+                    sections[current_section].append(content)
+            elif line and line[0].isdigit() and current_section:
+                import re
+                match = re.match(r"^\d+[\.\)]\s*(.+)", line)
+                if match:
+                    sections[current_section].append(match.group(1).strip())
+        return MultiLevelSynthesis(
+            tldr=sections["tldr"],
+            key_claims=sections["key_claims"],
+            evidence=sections["evidence"],
+            assumptions=sections["assumptions"],
+            open_questions=sections["open_questions"],
+            conflicts=sections["conflicts"],
+            next_moves=sections["next_moves"],
+            raw_text=raw_text,
+        )
+
+    async def get_smallest_uncertainty_reducer(self) -> str:
+        """Smallest next step that would reduce uncertainty the most."""
+        if not self.active_session or not self.active_session.history:
+            return "Start by sharing what you're thinking about."
+
+        history_text = []
+        for entry in self.active_session.history[-10:]:
+            if entry["type"] == "user":
+                history_text.append(f"USER: {entry['content']}")
+            else:
+                history_text.append(f"{entry['agent'].upper()}: {entry['response'].content}")
+
+        questions = list(set(self.active_session.questions))[-5:]
+        assumptions = [p.content for p in self.active_session.pins if p.status == AssumptionStatus.OPEN]
+        prompt = f"""Based on this thinking session, identify the SINGLE smallest next step that would most reduce uncertainty.
+
+Topic: {self.active_session.topic}
+
+Recent conversation:
+{chr(10).join(history_text)}
+
+Open questions: {questions if questions else "None identified yet"}
+Untested assumptions: {assumptions if assumptions else "None pinned yet"}
+
+Rules:
+- Must be SMALL (can be done in 5-30 minutes)
+- Must REDUCE UNCERTAINTY (not just gather more opinions)
+- Could be: a quick experiment, a specific question to ask someone, looking up one fact, testing one assumption
+- Be specific and actionable
+
+Respond with just the one next step, no preamble."""
+        messages = [Message(role="user", content=prompt)]
+        return await self.client.chat(
+            messages=messages,
+            model="fast",
+            temperature=0.3,
+            max_tokens=150,
+        )
