@@ -1,421 +1,382 @@
 """
-Test DaThinker's effectiveness at forcing users to think deeper.
+Test DaThinker across 5 non-code domains to evaluate whether it achieves
+its goal of forcing users to think.
 
-This test simulates a "thinking user" - someone genuinely engaging with the system
-to explore ideas, not trying to get direct answers. We test across 5 non-code domains:
-
-1. Philosophy/Ethics - moral dilemmas
-2. Personal Development - life decisions
-3. Relationships - interpersonal dynamics
-4. Business Strategy - strategic decisions
-5. Creative/Artistic - creative process exploration
-
-Success criteria for each scenario:
-- System responds with questions, not answers
-- Questions are thought-provoking and relevant
-- Multiple perspectives are offered
-- User is guided to explore their own thinking
+This test plays the role of a thinking user engaging genuinely with the system.
 """
 
 import asyncio
+import os
 import sys
-from pathlib import Path
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
-import json
-from datetime import datetime
 
 # Add src to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from dathinker.orchestrator import ThinkingOrchestrator, ThinkingMode
-
-
-@dataclass
-class TestScenario:
-    """A test scenario with multi-turn conversation."""
-    domain: str
-    topic: str
-    initial_thought: str
-    followup_thoughts: list[str]
-    description: str
+from dathinker.openrouter import OpenRouterClient
 
 
 @dataclass
 class ConversationTurn:
-    """A single turn in the conversation."""
+    """A single turn in a thinking conversation."""
     user_input: str
-    agent_responses: list[dict]
-    thinking_indicators: dict = field(default_factory=dict)
+    agent_responses: list[dict]  # List of {agent_name, content, questions, insights}
 
 
 @dataclass
-class ScenarioResult:
-    """Result of running a test scenario."""
-    scenario: TestScenario
+class DomainTest:
+    """Test case for a domain."""
+    domain: str
+    topic: str
+    initial_statement: str
+    followup_responses: list[str]  # User responses that show thinking
+
+
+@dataclass
+class TestResult:
+    """Result of testing a domain."""
+    domain: str
+    topic: str
     turns: list[ConversationTurn]
-    thinking_score: float  # 0-100, how well it forced thinking
-    analysis: str
-    passed: bool
+    evaluation: dict  # Evaluation metrics
 
 
-# Define 5 non-code domain test scenarios
-TEST_SCENARIOS = [
-    TestScenario(
-        domain="Philosophy/Ethics",
-        topic="The Trolley Problem Variant",
-        initial_thought="I've been thinking about autonomous vehicles and moral decisions. If a self-driving car must choose between hitting one person or five, should it be programmed to minimize deaths?",
-        followup_thoughts=[
-            "But what if the one person is a child and the five are elderly? Does that change anything?",
-            "I think I'm starting to see this differently now. Maybe the real question isn't about programming at all...",
-        ],
-        description="Testing philosophical reasoning about ethics in AI/technology"
-    ),
+class ThinkingUserSimulator:
+    """Simulates a user who genuinely engages with thinking prompts."""
 
-    TestScenario(
-        domain="Personal Development",
-        topic="Career Purpose vs Financial Security",
-        initial_thought="I'm 35 and have a stable corporate job that pays well, but I feel like I'm wasting my potential. I've always wanted to teach, but teachers earn much less. Is pursuing passion worth the financial sacrifice?",
-        followup_thoughts=[
-            "When I imagine myself at 60, I think I'd regret not trying. But I also have kids who depend on me.",
-            "Maybe it's not binary. I'm wondering if there are ways to test the waters before fully committing.",
-        ],
-        description="Testing guidance on life decisions without giving direct advice"
-    ),
+    def __init__(self, client: OpenRouterClient):
+        self.client = client
 
-    TestScenario(
-        domain="Relationships",
-        topic="Family Boundaries",
-        initial_thought="My parents are getting older and expect me to move back to my hometown to care for them. My spouse and I have built our life in another city. I feel torn between duty to my parents and my own family's needs.",
-        followup_thoughts=[
-            "I've never really questioned whether this 'duty' is real or just cultural expectation I've internalized.",
-            "Talking about this is helping me realize I haven't actually asked my parents what they really want.",
-        ],
-        description="Testing handling of emotional/relational complexity"
-    ),
+    async def generate_thinking_response(
+        self,
+        domain: str,
+        topic: str,
+        agent_responses: list[dict],
+        conversation_history: list[ConversationTurn],
+    ) -> str:
+        """Generate a thoughtful user response based on agent prompts."""
 
-    TestScenario(
-        domain="Business Strategy",
-        topic="Startup Pivot Decision",
-        initial_thought="My startup has been building a B2B SaaS product for 2 years. We have paying customers but growth is slow. A potential pivot to B2C could reach more users but would require completely rebuilding. What factors should drive this decision?",
-        followup_thoughts=[
-            "I'm realizing I might be chasing growth metrics rather than thinking about what problem I'm actually passionate about solving.",
-            "The team factor is huge. I haven't considered how a pivot would affect morale and whether key people would stay.",
-        ],
-        description="Testing business reasoning without prescriptive advice"
-    ),
+        # Build conversation context
+        context_parts = [f"Domain: {domain}", f"Topic: {topic}", ""]
 
-    TestScenario(
-        domain="Creative/Artistic",
-        topic="Artistic Authenticity",
-        initial_thought="I'm a painter who has developed a style that sells well. Galleries want more of the same. But I feel creatively stagnant and want to experiment with completely different techniques that might not sell. How do artists balance commercial success with creative growth?",
-        followup_thoughts=[
-            "I think part of my resistance to change comes from fear of losing my identity as an artist.",
-            "What if the experimentation itself could become part of my brand? I've been thinking too narrowly.",
-        ],
-        description="Testing exploration of creative/identity questions"
-    ),
-]
+        for turn in conversation_history:
+            context_parts.append(f"USER: {turn.user_input}")
+            for resp in turn.agent_responses:
+                context_parts.append(f"{resp['agent_name'].upper()}: {resp['content'][:500]}...")
+
+        # Add current agent responses
+        context_parts.append("\nCurrent agent responses:")
+        for resp in agent_responses:
+            context_parts.append(f"{resp['agent_name'].upper()}: {resp['content']}")
+
+        prompt = f"""You are a thoughtful human user engaging with a thinking assistance system.
+The agents have just asked you probing questions and challenged your thinking.
+
+{chr(10).join(context_parts)}
+
+As a thinking user, respond genuinely to these prompts. Show that you're:
+1. Actually considering their questions
+2. Revising or deepening your thinking
+3. Acknowledging valid challenges
+4. Asking follow-up questions of your own
+5. Expressing genuine uncertainty where appropriate
+
+Write a 2-4 sentence response as the user would naturally write.
+Do NOT just answer their questions directly - show the process of thinking about them.
+
+Your response as the thinking user:"""
+
+        from dathinker.openrouter import Message
+        messages = [Message(role="user", content=prompt)]
+
+        response = await self.client.chat(
+            messages=messages,
+            model="reasoning",
+            temperature=0.8,
+            max_tokens=256,
+        )
+
+        return response.strip()
 
 
-def analyze_thinking_indicators(response_text: str) -> dict:
-    """Analyze a response for thinking-forcing indicators."""
-    text_lower = response_text.lower()
+class DaThinkerTester:
+    """Tests DaThinker's ability to force users to think."""
 
-    # Check for direct answer phrases, but allow them in questions
-    direct_answer_phrases = [
-        "you should", "i recommend", "the answer is", "definitely",
-        "you must", "the best option is", "here's what to do"
+    # Test domains with initial statements and prepared followups
+    TEST_DOMAINS = [
+        DomainTest(
+            domain="Philosophy",
+            topic="The meaning of life",
+            initial_statement="I believe the meaning of life is to be happy and make others happy. That seems pretty straightforward to me.",
+            followup_responses=[
+                "Hmm, that's a good point about different types of happiness. I guess I was thinking more about contentment than pleasure.",
+                "I'm not sure about suffering being necessary... but maybe some struggle gives meaning?",
+            ]
+        ),
+        DomainTest(
+            domain="Ethics",
+            topic="Moral dilemmas in AI",
+            initial_statement="AI should always be transparent about being AI. Deception is never acceptable.",
+            followup_responses=[
+                "Wait, I hadn't considered therapeutic contexts. Maybe there are edge cases where the line is blurry.",
+                "The point about white lies is interesting - we accept some deception in human interactions.",
+            ]
+        ),
+        DomainTest(
+            domain="Career Decisions",
+            topic="Changing careers at 40",
+            initial_statement="I'm thinking about leaving my stable corporate job to start my own business. Life is short and I don't want regrets.",
+            followup_responses=[
+                "You raise a fair point about what 'regret' actually means. I might regret not trying, but I might also regret failing.",
+                "Financial security is something I've been avoiding thinking about honestly.",
+            ]
+        ),
+        DomainTest(
+            domain="Relationships",
+            topic="Setting boundaries with family",
+            initial_statement="My parents are too involved in my life and I need to set firm boundaries. They need to respect my independence.",
+            followup_responses=[
+                "I guess their involvement does come from love, even if it feels suffocating. Maybe it's not all negative.",
+                "The question about what I actually want the relationship to look like made me pause.",
+            ]
+        ),
+        DomainTest(
+            domain="Personal Finance",
+            topic="Investing for the future",
+            initial_statement="I should invest aggressively while I'm young because time is on my side. I can always recover from losses.",
+            followup_responses=[
+                "I haven't really defined what 'recover' means or what my actual risk tolerance is when markets drop.",
+                "The point about opportunity cost is something I didn't consider - what if I need that money sooner?",
+            ]
+        ),
     ]
 
-    # Split into sentences and check if direct phrases appear outside of questions
-    sentences = response_text.replace("?", "?\n").split("\n")
-    has_direct_answer = False
-    for sentence in sentences:
-        sentence_lower = sentence.lower().strip()
-        # Skip if it's a question (ends with ?)
-        if sentence.strip().endswith("?"):
-            continue
-        # Check for direct answer phrases in non-question sentences
-        if any(phrase in sentence_lower for phrase in direct_answer_phrases):
-            has_direct_answer = True
-            break
+    def __init__(self):
+        self.client = OpenRouterClient()
+        self.orchestrator = ThinkingOrchestrator(self.client, model="balanced")
+        self.simulator = ThinkingUserSimulator(self.client)
+        self.results: list[TestResult] = []
 
-    indicators = {
-        "asks_questions": "?" in response_text,
-        "question_count": response_text.count("?"),
-        "avoids_direct_answers": not has_direct_answer,
-        "explores_perspectives": any(phrase in text_lower for phrase in [
-            "perspective", "viewpoint", "consider", "what if", "another way",
-            "on the other hand", "alternatively", "different angle"
-        ]),
-        "encourages_reflection": any(phrase in text_lower for phrase in [
-            "reflect", "think about", "explore", "examine", "consider",
-            "what does", "what would", "how might", "why do you"
-        ]),
-        "validates_thinking": any(phrase in text_lower for phrase in [
-            "interesting", "you're exploring", "that's a", "your point about",
-            "you've identified", "you're noticing"
-        ]),
-        "deepens_inquiry": any(phrase in text_lower for phrase in [
-            "underlying", "deeper", "root", "fundamental", "core",
-            "beneath", "driving", "really asking"
-        ]),
-    }
+    async def test_domain(self, domain_test: DomainTest, turns: int = 3) -> TestResult:
+        """Test a single domain with multiple conversation turns."""
 
-    return indicators
+        print(f"\n{'='*60}")
+        print(f"TESTING DOMAIN: {domain_test.domain}")
+        print(f"Topic: {domain_test.topic}")
+        print(f"{'='*60}\n")
 
+        # Start session
+        self.orchestrator.start_session(domain_test.topic, ThinkingMode.ADAPTIVE)
 
-def calculate_thinking_score(turns: list[ConversationTurn]) -> float:
-    """Calculate overall thinking-forcing score (0-100)."""
-    if not turns:
-        return 0.0
+        conversation: list[ConversationTurn] = []
+        current_input = domain_test.initial_statement
 
-    total_score = 0
-    max_score = 0
+        for turn_num in range(turns):
+            print(f"\n--- Turn {turn_num + 1} ---")
+            print(f"USER: {current_input}\n")
 
-    for turn in turns:
-        for resp in turn.agent_responses:
-            indicators = turn.thinking_indicators.get(resp.get("agent", ""), {})
-
-            # Scoring weights
-            weights = {
-                "asks_questions": 20,
-                "avoids_direct_answers": 25,
-                "explores_perspectives": 15,
-                "encourages_reflection": 15,
-                "validates_thinking": 10,
-                "deepens_inquiry": 15,
-            }
-
-            for indicator, weight in weights.items():
-                max_score += weight
-                if indicators.get(indicator, False):
-                    total_score += weight
-
-            # Bonus for multiple questions (up to 10 points)
-            q_count = indicators.get("question_count", 0)
-            max_score += 10
-            total_score += min(q_count * 3, 10)
-
-    return (total_score / max_score * 100) if max_score > 0 else 0
-
-
-async def run_scenario(orchestrator: ThinkingOrchestrator, scenario: TestScenario) -> ScenarioResult:
-    """Run a single test scenario through the system."""
-
-    print(f"\n{'='*60}")
-    print(f"DOMAIN: {scenario.domain}")
-    print(f"TOPIC: {scenario.topic}")
-    print(f"{'='*60}")
-
-    # Start a new session
-    orchestrator.start_session(scenario.topic, ThinkingMode.ADAPTIVE)
-
-    turns = []
-    all_thoughts = [scenario.initial_thought] + scenario.followup_thoughts
-
-    for i, thought in enumerate(all_thoughts):
-        print(f"\n--- Turn {i+1} ---")
-        print(f"USER: {thought[:100]}..." if len(thought) > 100 else f"USER: {thought}")
-
-        try:
-            responses = await orchestrator.think_adaptive(thought)
+            # Get agent responses
+            responses = await self.orchestrator.think_adaptive(current_input)
 
             agent_responses = []
-            turn_indicators = {}
-
             for resp in responses:
-                agent_name = resp.agent_name
-                content = resp.content
-
-                print(f"\n[{agent_name}]:")
-                # Print truncated response
-                preview = content[:200] + "..." if len(content) > 200 else content
-                print(preview)
-
-                # Analyze for thinking indicators
-                indicators = analyze_thinking_indicators(content)
-                turn_indicators[agent_name] = indicators
-
                 agent_responses.append({
-                    "agent": agent_name,
-                    "content": content,
-                    "indicators": indicators
+                    "agent_name": resp.agent_name,
+                    "content": resp.content,
+                    "questions": resp.questions,
+                    "insights": resp.insights,
                 })
+                print(f"{resp.agent_name.upper()}:")
+                print(f"{resp.content}\n")
 
-            turns.append(ConversationTurn(
-                user_input=thought,
+            conversation.append(ConversationTurn(
+                user_input=current_input,
                 agent_responses=agent_responses,
-                thinking_indicators=turn_indicators
             ))
 
-        except Exception as e:
-            print(f"ERROR: {e}")
-            turns.append(ConversationTurn(
-                user_input=thought,
-                agent_responses=[{"agent": "error", "content": str(e)}],
-                thinking_indicators={}
-            ))
+            # Generate next user response (simulating thinking user)
+            if turn_num < turns - 1:
+                if turn_num < len(domain_test.followup_responses):
+                    # Use prepared response
+                    current_input = domain_test.followup_responses[turn_num]
+                else:
+                    # Generate dynamic response
+                    current_input = await self.simulator.generate_thinking_response(
+                        domain_test.domain,
+                        domain_test.topic,
+                        agent_responses,
+                        conversation,
+                    )
 
-    # Calculate thinking score
-    thinking_score = calculate_thinking_score(turns)
+        # Get synthesis
+        print(f"\n--- Session Synthesis ---")
+        synthesis = await self.orchestrator.synthesize_session()
+        print(synthesis)
 
-    # Generate analysis
-    analysis = generate_analysis(scenario, turns, thinking_score)
+        # Evaluate this domain
+        evaluation = await self._evaluate_domain(domain_test, conversation, synthesis)
 
-    # Determine pass/fail (threshold: 60%)
-    passed = thinking_score >= 60
+        result = TestResult(
+            domain=domain_test.domain,
+            topic=domain_test.topic,
+            turns=conversation,
+            evaluation=evaluation,
+        )
+        self.results.append(result)
 
-    return ScenarioResult(
-        scenario=scenario,
-        turns=turns,
-        thinking_score=thinking_score,
-        analysis=analysis,
-        passed=passed
-    )
+        return result
+
+    async def _evaluate_domain(
+        self,
+        domain_test: DomainTest,
+        conversation: list[ConversationTurn],
+        synthesis: str,
+    ) -> dict:
+        """Evaluate whether the system forced the user to think."""
+
+        # Count metrics
+        total_questions = 0
+        total_insights = 0
+        agents_used = set()
+
+        for turn in conversation:
+            for resp in turn.agent_responses:
+                total_questions += len(resp["questions"])
+                total_insights += len(resp["insights"])
+                agents_used.add(resp["agent_name"])
+
+        # Analyze quality with LLM
+        conversation_text = []
+        for turn in conversation:
+            conversation_text.append(f"USER: {turn.user_input}")
+            for resp in turn.agent_responses:
+                conversation_text.append(f"{resp['agent_name'].upper()}: {resp['content']}")
+
+        eval_prompt = f"""Analyze this thinking assistance conversation for effectiveness:
+
+Domain: {domain_test.domain}
+Topic: {domain_test.topic}
+
+Initial user statement: {domain_test.initial_statement}
+
+Conversation:
+{chr(10).join(conversation_text)}
+
+Synthesis:
+{synthesis}
+
+Rate the following on a scale of 1-10 and explain briefly:
+
+1. QUESTION_QUALITY: Did the agents ask probing, thought-provoking questions?
+2. ASSUMPTION_CHALLENGE: Did the agents effectively challenge assumptions?
+3. PERSPECTIVE_EXPANSION: Did the agents offer new perspectives?
+4. USER_ENGAGEMENT: Does the user appear to be genuinely thinking deeper?
+5. NO_DIRECT_ANSWERS: Did agents avoid giving direct answers/advice?
+6. COGNITIVE_DEMAND: Did the interaction demand mental effort from the user?
+
+Format your response as:
+QUESTION_QUALITY: X/10 - explanation
+ASSUMPTION_CHALLENGE: X/10 - explanation
+PERSPECTIVE_EXPANSION: X/10 - explanation
+USER_ENGAGEMENT: X/10 - explanation
+NO_DIRECT_ANSWERS: X/10 - explanation
+COGNITIVE_DEMAND: X/10 - explanation
+OVERALL: X/10 - overall assessment
+
+Did this achieve the goal of FORCING the user to think? (YES/NO/PARTIAL)"""
+
+        from dathinker.openrouter import Message
+        messages = [Message(role="user", content=eval_prompt)]
+
+        eval_response = await self.client.chat(
+            messages=messages,
+            model="reasoning",
+            temperature=0.3,
+            max_tokens=512,
+        )
+
+        return {
+            "total_questions": total_questions,
+            "total_insights": total_insights,
+            "agents_used": list(agents_used),
+            "num_turns": len(conversation),
+            "llm_evaluation": eval_response,
+        }
+
+    async def run_all_tests(self) -> None:
+        """Run tests across all domains."""
+
+        print("\n" + "="*80)
+        print("DATHINKER THINKING USER TEST")
+        print("Testing whether the software achieves its goal of forcing users to think")
+        print("="*80)
+
+        for domain_test in self.TEST_DOMAINS:
+            await self.test_domain(domain_test, turns=3)
+            await asyncio.sleep(1)  # Rate limiting between domains
+
+        # Print final summary
+        await self._print_summary()
+
+    async def _print_summary(self) -> None:
+        """Print final summary of all tests."""
+
+        print("\n" + "="*80)
+        print("FINAL SUMMARY: DOES DATHINKER FORCE USERS TO THINK?")
+        print("="*80 + "\n")
+
+        for result in self.results:
+            print(f"\n{'='*60}")
+            print(f"Domain: {result.domain}")
+            print(f"Topic: {result.topic}")
+            print(f"{'='*60}")
+            print(f"Turns: {result.evaluation['num_turns']}")
+            print(f"Total Questions Asked: {result.evaluation['total_questions']}")
+            print(f"Total Insights Generated: {result.evaluation['total_insights']}")
+            print(f"Agents Used: {', '.join(result.evaluation['agents_used'])}")
+            print(f"\nLLM Evaluation:")
+            print(result.evaluation['llm_evaluation'])
+
+        # Overall verdict
+        print("\n" + "="*80)
+        print("OVERALL VERDICT")
+        print("="*80)
+
+        verdict_prompt = f"""Based on testing DaThinker across 5 domains, provide a final verdict.
+
+Results summary:
+"""
+        for result in self.results:
+            verdict_prompt += f"\n{result.domain}:\n{result.evaluation['llm_evaluation']}\n"
+
+        verdict_prompt += """
+Provide:
+1. An overall assessment (1-2 paragraphs)
+2. Does the software achieve its goal of FORCING users to think? (YES/NO/PARTIAL)
+3. Key strengths observed
+4. Areas for improvement
+5. Recommendation"""
+
+        from dathinker.openrouter import Message
+        messages = [Message(role="user", content=verdict_prompt)]
+
+        verdict = await self.client.chat(
+            messages=messages,
+            model="reasoning",
+            temperature=0.4,
+            max_tokens=600,
+        )
+
+        print(verdict)
 
 
-def generate_analysis(scenario: TestScenario, turns: list[ConversationTurn], score: float) -> str:
-    """Generate human-readable analysis of the scenario results."""
-
-    lines = [
-        f"\nANALYSIS: {scenario.domain} - {scenario.topic}",
-        f"Thinking Score: {score:.1f}/100",
-        "",
-        "Indicators across all turns:"
-    ]
-
-    # Aggregate indicators
-    total_questions = 0
-    agents_used = set()
-    avoided_answers = 0
-    total_responses = 0
-
-    for turn in turns:
-        for resp in turn.agent_responses:
-            agent = resp.get("agent", "")
-            indicators = turn.thinking_indicators.get(agent, {})
-
-            agents_used.add(agent)
-            total_responses += 1
-            total_questions += indicators.get("question_count", 0)
-            if indicators.get("avoids_direct_answers", False):
-                avoided_answers += 1
-
-    lines.append(f"  - Total questions asked: {total_questions}")
-    lines.append(f"  - Agents engaged: {', '.join(agents_used)}")
-    lines.append(f"  - Responses avoiding direct answers: {avoided_answers}/{total_responses}")
-
-    if score >= 80:
-        lines.append("\nVerdict: EXCELLENT - System strongly encourages deeper thinking")
-    elif score >= 60:
-        lines.append("\nVerdict: GOOD - System effectively promotes reflection")
-    elif score >= 40:
-        lines.append("\nVerdict: MODERATE - Some thinking encouragement, could be stronger")
-    else:
-        lines.append("\nVerdict: WEAK - System may be giving too many direct answers")
-
-    return "\n".join(lines)
-
-
-async def run_all_tests():
-    """Run all test scenarios and generate comprehensive report."""
-
-    print("\n" + "="*70)
-    print("  DATHINKER THINKING-FORCING EFFECTIVENESS TEST")
-    print("  Testing across 5 non-code domains with a 'thinking user' persona")
-    print("="*70)
-
-    orchestrator = ThinkingOrchestrator(model="balanced")
-    results = []
-
-    for scenario in TEST_SCENARIOS:
-        try:
-            result = await run_scenario(orchestrator, scenario)
-            results.append(result)
-            print(result.analysis)
-        except Exception as e:
-            print(f"\nFAILED to run scenario {scenario.domain}: {e}")
-            results.append(ScenarioResult(
-                scenario=scenario,
-                turns=[],
-                thinking_score=0,
-                analysis=f"ERROR: {e}",
-                passed=False
-            ))
-
-    # Generate summary report
-    print("\n" + "="*70)
-    print("  FINAL SUMMARY")
-    print("="*70)
-
-    passed = sum(1 for r in results if r.passed)
-    total = len(results)
-    avg_score = sum(r.thinking_score for r in results) / total if total > 0 else 0
-
-    print(f"\nScenarios Passed: {passed}/{total}")
-    print(f"Average Thinking Score: {avg_score:.1f}/100")
-    print("\nBy Domain:")
-
-    for result in results:
-        status = "✓ PASS" if result.passed else "✗ FAIL"
-        print(f"  {result.scenario.domain}: {result.thinking_score:.1f}/100 [{status}]")
-
-    # Overall verdict
-    print("\n" + "-"*40)
-    if passed == total and avg_score >= 70:
-        verdict = "SUCCESS: DaThinker effectively forces users to think deeper"
-    elif passed >= total * 0.8:
-        verdict = "MOSTLY EFFECTIVE: DaThinker generally promotes deeper thinking"
-    elif passed >= total * 0.5:
-        verdict = "PARTIALLY EFFECTIVE: Mixed results in forcing deeper thinking"
-    else:
-        verdict = "NEEDS IMPROVEMENT: System may not be achieving its thinking goals"
-
-    print(f"OVERALL: {verdict}")
-
-    # Save detailed results
-    output_path = Path(__file__).parent / "thinking_user_results.json"
-    with open(output_path, "w") as f:
-        json.dump({
-            "timestamp": datetime.now().isoformat(),
-            "summary": {
-                "passed": passed,
-                "total": total,
-                "average_score": avg_score,
-                "verdict": verdict
-            },
-            "scenarios": [
-                {
-                    "domain": r.scenario.domain,
-                    "topic": r.scenario.topic,
-                    "thinking_score": r.thinking_score,
-                    "passed": r.passed,
-                    "turns": [
-                        {
-                            "user_input": t.user_input,
-                            "responses": [
-                                {
-                                    "agent": resp.get("agent"),
-                                    "content": resp.get("content"),
-                                    "indicators": resp.get("indicators")
-                                }
-                                for resp in t.agent_responses
-                            ]
-                        }
-                        for t in r.turns
-                    ]
-                }
-                for r in results
-            ]
-        }, f, indent=2)
-
-    print(f"\nDetailed results saved to: {output_path}")
-
-    return passed == total
+async def main():
+    """Run the thinking user tests."""
+    tester = DaThinkerTester()
+    await tester.run_all_tests()
 
 
 if __name__ == "__main__":
-    success = asyncio.run(run_all_tests())
-    sys.exit(0 if success else 1)
+    asyncio.run(main())
