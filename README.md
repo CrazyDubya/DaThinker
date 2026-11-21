@@ -51,7 +51,7 @@ Set your OpenRouter API key using one of these methods (in order of precedence):
 1. **Config file** (recommended - avoids shell history):
    ```bash
    mkdir -p ~/.config/dathinker
-   echo 'api_key = "sk-or-v1-your-key-here"' > ~/.config/dathinker/config.toml
+   echo 'openrouter_api_key = "sk-or-v1-your-key-here"' > ~/.config/dathinker/config.toml
    chmod 600 ~/.config/dathinker/config.toml
    ```
 
