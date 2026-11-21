@@ -189,6 +189,24 @@ class ThinkingOrchestrator:
         """List available agent names."""
         return list(self.agents.keys())
 
+    def _build_thinking_context(self, context: str | None = None) -> str | None:
+        """Apply the existing adaptive session-control context to any thinking mode."""
+        # Build context including session goal and constraints
+        full_context = context or ""
+        if self.active_session:
+            if self.active_session.goal:
+                full_context = f"GOAL: {self.active_session.goal}\n{full_context}"
+            if self.active_session.constraints:
+                constraints_text = "\n".join(f"- {c.content}" for c in self.active_session.constraints)
+                full_context = f"CONSTRAINTS:\n{constraints_text}\n{full_context}"
+            if self.active_session.assumptions:
+                open_assumptions = [a for a in self.active_session.assumptions if a.status == "open"]
+                if open_assumptions:
+                    assumptions_text = "\n".join(f"- {a.content}" for a in open_assumptions)
+                    full_context = f"WORKING ASSUMPTIONS:\n{assumptions_text}\n{full_context}"
+
+        return full_context if full_context else None
+
     async def think_with_agent(
         self,
         user_input: str,
@@ -200,7 +218,7 @@ class ThinkingOrchestrator:
         if not agent:
             raise ValueError(f"Unknown agent: {agent_name}")
 
-        response = await agent.think(user_input, context)
+        response = await agent.think(user_input, self._build_thinking_context(context))
 
         # Record in session history
         if self.active_session:
@@ -228,9 +246,11 @@ class ThinkingOrchestrator:
         """Get responses from multiple agents in parallel."""
         agent_names = agent_names or list(self.agents.keys())
 
+        full_context = self._build_thinking_context(context)
+
         # Run all agents in parallel
         tasks = [
-            self.agents[name].think(user_input, context)
+            self.agents[name].think(user_input, full_context)
             for name in agent_names
             if name in self.agents
         ]
@@ -272,19 +292,7 @@ class ThinkingOrchestrator:
         # Get turn count for router
         turn_count = len([h for h in (self.active_session.history if self.active_session else []) if h.get("type") == "user"])
 
-        # Build context including session goal and constraints
-        full_context = context or ""
-        if self.active_session:
-            if self.active_session.goal:
-                full_context = f"GOAL: {self.active_session.goal}\n{full_context}"
-            if self.active_session.constraints:
-                constraints_text = "\n".join(f"- {c.content}" for c in self.active_session.constraints)
-                full_context = f"CONSTRAINTS:\n{constraints_text}\n{full_context}"
-            if self.active_session.assumptions:
-                open_assumptions = [a for a in self.active_session.assumptions if a.status == "open"]
-                if open_assumptions:
-                    assumptions_text = "\n".join(f"- {a.content}" for a in open_assumptions)
-                    full_context = f"WORKING ASSUMPTIONS:\n{assumptions_text}\n{full_context}"
+        full_context = self._build_thinking_context(context)
 
         # Use pluggable router for agent selection
         routing_trace = await self.router.route(
